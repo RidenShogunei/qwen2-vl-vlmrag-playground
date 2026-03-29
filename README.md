@@ -4,6 +4,7 @@ A small learning project for running `Qwen/Qwen2-VL-2B-Instruct` in WSL and buil
 
 ## What this project includes
 
+- GUIDE_CN.md: 中文代码阅读与实验指南
 - `CODE_READING.md`: guided walkthrough for understanding and modifying the code
 - `src/run_qwen2_vl_chat.py`: single-image chat with Qwen2-VL
 - `src/index_corpus.py`: build a tiny local text retrieval index for RAG
@@ -171,3 +172,81 @@ Fields:
   - model download is expected on first invocation
 - Missing optional embedding deps:
   - indexing falls back to built-in hashed bag-of-words
+
+
+## Benchmark: DocVQA / InfographicVQA (val)
+
+### 1) Prepare benchmark data
+
+```bash
+python src/prepare_benchmark_data.py \
+  --dataset all \
+  --split validation \
+  --output-dir benchmarks/val \
+  --images-dir benchmarks/images
+```
+
+Prepared files:
+
+- `benchmarks/val/eval_set.jsonl`
+- `benchmarks/val/corpus.jsonl`
+
+### 2) Build retrieval index (official corpus only)
+
+No chunk:
+
+```bash
+python src/index_corpus.py \
+  --corpus benchmarks/val/corpus.jsonl \
+  --output indexes/bench_val_nochunk.json \
+  --embedding-backend auto
+```
+
+Chunked:
+
+```bash
+python src/index_corpus.py \
+  --corpus benchmarks/val/corpus.jsonl \
+  --output indexes/bench_val_chunk_40_10.json \
+  --embedding-backend auto \
+  --chunk-size-words 40 \
+  --chunk-overlap-words 10
+```
+
+### 3) Single benchmark run (plain vs rag)
+
+```bash
+python src/evaluate_rag.py \
+  --eval-set benchmarks/val/eval_set.jsonl \
+  --index indexes/bench_val_nochunk.json \
+  --retrieval-k 3 \
+  --prompt-template direct \
+  --rerank \
+  --run-generation \
+  --output-json reports/bench_k3_direct_rerank.json \
+  --output-csv reports/bench_k3_direct_rerank.csv \
+  --failure-json reports/bench_k3_direct_rerank_failures.json \
+  --data-version docvqa_infographicvqa_val_v1 \
+  --config-name k3_direct_rerank
+```
+
+Metrics include:
+
+- retrieval: `hit_rate_at_k`, `retrieval_mrr`
+- generation: `plain_em`, `plain_f1`, `rag_em`, `rag_f1`
+
+### 4) Run first comparison grid
+
+```bash
+python src/run_benchmark_grid.py \
+  --eval-set benchmarks/val/eval_set.jsonl \
+  --index indexes/bench_val_nochunk.json \
+  --output-dir reports/benchmark_grid_val \
+  --run-generation \
+  --data-version docvqa_infographicvqa_val_v1
+```
+
+Output:
+
+- per-config reports under `reports/benchmark_grid_val/`
+- aggregated summary: `reports/benchmark_grid_val/summary.json`
