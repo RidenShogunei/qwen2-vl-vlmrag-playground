@@ -1,0 +1,11 @@
+﻿.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+indexes/*.json
+examples/*.png
+examples/*.jpg
+examples/*.jpeg
+*.log
