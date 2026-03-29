@@ -1,0 +1,24 @@
+﻿{"id":"q01","query":"Which entry is about KPI cards and traffic trends?","expected_retrieval_ids":["analytics-dashboard"],"expected_keywords":["analytics","dashboard"],"image":"examples/test_ui.png"}
+{"id":"q02","query":"Which item covers conversion funnels and retention summaries?","expected_retrieval_ids":["analytics-dashboard"],"expected_keywords":["conversion","retention"],"image":"examples/test_ui.png"}
+{"id":"q03","query":"Where should I look for date-range filters in performance review?","expected_retrieval_ids":["analytics-dashboard"],"expected_keywords":["date-range","analytics"],"image":"examples/test_ui.png"}
+{"id":"q04","query":"Which area usually contains customer names and company fields?","expected_retrieval_ids":["crm-contact-list"],"expected_keywords":["crm","customer"],"image":"examples/test_ui.png"}
+{"id":"q05","query":"Pipeline stages and follow-up status belong to what type of screen?","expected_retrieval_ids":["crm-contact-list"],"expected_keywords":["pipeline","crm"],"image":"examples/test_ui.png"}
+{"id":"q06","query":"What entry mentions owner assignment and bulk actions for sales workflows?","expected_retrieval_ids":["crm-contact-list"],"expected_keywords":["sales","owner"],"image":"examples/test_ui.png"}
+{"id":"q07","query":"Which entry talks about kanban columns and issue cards?","expected_retrieval_ids":["project-kanban"],"expected_keywords":["kanban","project"],"image":"examples/test_ui.png"}
+{"id":"q08","query":"Assignees, due dates, and priority labels are typical of what area?","expected_retrieval_ids":["project-kanban"],"expected_keywords":["project","priority"],"image":"examples/test_ui.png"}
+{"id":"q09","query":"Sprint grouping and workflow transitions point to which screen type?","expected_retrieval_ids":["project-kanban"],"expected_keywords":["sprint","workflow"],"image":"examples/test_ui.png"}
+{"id":"q10","query":"Which entry contains subscription plan details and invoice history?","expected_retrieval_ids":["settings-billing"],"expected_keywords":["subscription","invoice"],"image":"examples/test_ui.png"}
+{"id":"q11","query":"Payment methods and renewal dates belong to what area?","expected_retrieval_ids":["settings-billing"],"expected_keywords":["billing","renewal"],"image":"examples/test_ui.png"}
+{"id":"q12","query":"Seat counts and usage limits are usually in which kind of page?","expected_retrieval_ids":["settings-billing"],"expected_keywords":["seat","usage"],"image":"examples/test_ui.png"}
+{"id":"q13","query":"I need a page for business performance review with KPI cards.","expected_retrieval_ids":["analytics-dashboard"],"expected_keywords":["performance","kpi"],"image":"examples/test_ui.png"}
+{"id":"q14","query":"Where would a sales rep track contact follow-ups?","expected_retrieval_ids":["crm-contact-list"],"expected_keywords":["sales","follow"],"image":"examples/test_ui.png"}
+{"id":"q15","query":"Which screen category best fits backlog cards moving across columns?","expected_retrieval_ids":["project-kanban"],"expected_keywords":["kanban","columns"],"image":"examples/test_ui.png"}
+{"id":"q16","query":"What page type would show invoice history for account management?","expected_retrieval_ids":["settings-billing"],"expected_keywords":["invoice","billing"],"image":"examples/test_ui.png"}
+{"id":"q17","query":"Traffic sources and trend charts usually appear in what module?","expected_retrieval_ids":["analytics-dashboard"],"expected_keywords":["traffic","analytics"],"image":"examples/test_ui.png"}
+{"id":"q18","query":"Which entry sounds like customer operations and owner assignment?","expected_retrieval_ids":["crm-contact-list"],"expected_keywords":["customer","owner"],"image":"examples/test_ui.png"}
+{"id":"q19","query":"Due dates and assignees with sprint grouping indicate what area?","expected_retrieval_ids":["project-kanban"],"expected_keywords":["due","sprint"],"image":"examples/test_ui.png"}
+{"id":"q20","query":"Upgrade controls with payment method info belong where?","expected_retrieval_ids":["settings-billing"],"expected_keywords":["upgrade","payment"],"image":"examples/test_ui.png"}
+{"id":"q21","query":"I want conversion breakdowns and retention summaries in one place.","expected_retrieval_ids":["analytics-dashboard"],"expected_keywords":["conversion","retention"],"image":"examples/test_ui.png"}
+{"id":"q22","query":"What screen type has pipeline stage and bulk sales actions?","expected_retrieval_ids":["crm-contact-list"],"expected_keywords":["pipeline","sales"],"image":"examples/test_ui.png"}
+{"id":"q23","query":"Where do issue cards move through workflow status transitions?","expected_retrieval_ids":["project-kanban"],"expected_keywords":["issue","workflow"],"image":"examples/test_ui.png"}
+{"id":"q24","query":"Which area shows subscription details, seats, and renewal date?","expected_retrieval_ids":["settings-billing"],"expected_keywords":["subscription","renewal"],"image":"examples/test_ui.png"}

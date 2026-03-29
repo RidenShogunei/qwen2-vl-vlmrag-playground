@@ -26,6 +26,27 @@ DEFAULT_MODEL = "Qwen/Qwen2-VL-2B-Instruct"
 DEFAULT_HASH_DIM = 2048
 DEFAULT_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 _MODEL_CACHE = {}
+_EMBED_MODEL_CACHE = {}
+PROMPT_TEMPLATES = {
+    "direct": (
+        "You are answering a question about the current image.\n"
+        "Use retrieval context when relevant, and avoid unsupported claims.\n\n"
+        "Retrieval context:\n{context}\n\n"
+        "Question: {question}"
+    ),
+    "cited": (
+        "Answer the question about the current image using ONLY the retrieval context below.\n"
+        "When using evidence, cite bracket ids like [1] and [2].\n\n"
+        "Retrieval context:\n{context}\n\n"
+        "Question: {question}"
+    ),
+    "strict": (
+        "You must answer using only the provided retrieval context and the current image.\n"
+        "If evidence is insufficient, explicitly say 'I am not sure based on the provided evidence.'\n\n"
+        "Retrieval context:\n{context}\n\n"
+        "Question: {question}"
+    ),
+}
 
 
 def add_common_model_args(parser: argparse.ArgumentParser) -> None:
@@ -198,7 +219,9 @@ def build_text_embeddings(
         try:
             from sentence_transformers import SentenceTransformer
 
-            model = SentenceTransformer(embedding_model)
+            if embedding_model not in _EMBED_MODEL_CACHE:
+                _EMBED_MODEL_CACHE[embedding_model] = SentenceTransformer(embedding_model)
+            model = _EMBED_MODEL_CACHE[embedding_model]
             vectors = model.encode(
                 list(texts),
                 normalize_embeddings=True,
@@ -230,6 +253,45 @@ def load_corpus_jsonl(corpus_path: str) -> List[Dict[str, str]]:
     if not records:
         raise ValueError(f"No corpus records found in: {path}")
     return records
+
+
+def split_text_to_chunks(text: str, chunk_size_words: int, chunk_overlap_words: int) -> List[str]:
+    words = text.split()
+    if chunk_size_words <= 0 or len(words) <= chunk_size_words:
+        return [text]
+    step = max(1, chunk_size_words - max(0, chunk_overlap_words))
+    chunks = []
+    for start in range(0, len(words), step):
+        part = words[start : start + chunk_size_words]
+        if not part:
+            break
+        chunks.append(" ".join(part))
+        if start + chunk_size_words >= len(words):
+            break
+    return chunks
+
+
+def expand_records_with_chunking(
+    records: Sequence[Dict[str, str]],
+    chunk_size_words: int = 0,
+    chunk_overlap_words: int = 0,
+) -> List[Dict[str, str]]:
+    expanded = []
+    for record in records:
+        chunks = split_text_to_chunks(record["text"], chunk_size_words, chunk_overlap_words)
+        if len(chunks) == 1:
+            item = dict(record)
+            item["parent_id"] = record["id"]
+            item["chunk_id"] = f"{record['id']}#0"
+            expanded.append(item)
+            continue
+        for idx, chunk in enumerate(chunks):
+            item = dict(record)
+            item["text"] = chunk
+            item["parent_id"] = record["id"]
+            item["chunk_id"] = f"{record['id']}#{idx}"
+            expanded.append(item)
+    return expanded
 
 
 def save_index(output_path: str, payload: Dict) -> Path:
@@ -267,6 +329,20 @@ def retrieve_topk(query: str, index_payload: Dict, topk: int) -> List[Dict]:
     return results
 
 
+def rerank_results_by_overlap(query: str, results: Sequence[Dict]) -> List[Dict]:
+    q_tokens = set(tokenize_text(query))
+    reranked = []
+    for item in results:
+        text_tokens = set(tokenize_text(item.get("text", "")))
+        overlap = len(q_tokens & text_tokens)
+        boosted = dict(item)
+        boosted["rerank_overlap"] = overlap
+        boosted["rerank_score"] = round(float(item.get("score", 0.0)) + overlap * 0.02, 4)
+        reranked.append(boosted)
+    reranked.sort(key=lambda x: x["rerank_score"], reverse=True)
+    return reranked
+
+
 def format_rag_context(results: Sequence[Dict]) -> str:
     if not results:
         return "No retrieval context found."
@@ -277,3 +353,9 @@ def format_rag_context(results: Sequence[Dict]) -> str:
         lines.append(item["text"])
     return "\n".join(lines)
 
+
+def render_rag_prompt(template_name: str, question: str, context: str) -> str:
+    if template_name not in PROMPT_TEMPLATES:
+        allowed = ", ".join(sorted(PROMPT_TEMPLATES.keys()))
+        raise ValueError(f"Unsupported prompt template '{template_name}'. Allowed: {allowed}")
+    return PROMPT_TEMPLATES[template_name].format(question=question, context=context)
