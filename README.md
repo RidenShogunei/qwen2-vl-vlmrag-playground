@@ -129,3 +129,4 @@ python src/run_benchmark_grid.py \
 - SigLIP 报 tokenizer / protobuf 错误：确认安装 `sentencepiece` 与 `protobuf`。
 - 显存不足：先降 `retrieval_k`、缩小图像，必要时加 `--mm-cpu` / `--cpu` 做 smoke。
 
+
