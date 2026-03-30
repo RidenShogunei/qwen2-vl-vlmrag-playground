@@ -5,7 +5,7 @@ A small learning project for running `Qwen/Qwen2-VL-2B-Instruct` in WSL and buil
 ## What this project includes
 
 - GUIDE_CN.md: 中文代码阅读与实验指南
-- `CODE_READING.md`: guided walkthrough for understanding and modifying the code
+- `CODE_READING.md`: guided walkthrough for understanding and modifying the code`n- `CODE_READING_CN_BENCHMARK.md`: 中文 benchmark 代码阅读与复现实验指南
 - `src/run_qwen2_vl_chat.py`: single-image chat with Qwen2-VL
 - `src/index_corpus.py`: build a tiny local text retrieval index for RAG
 - `src/query_with_rag.py`: compare plain VLM output vs RAG-augmented output
@@ -250,3 +250,39 @@ Output:
 
 - per-config reports under `reports/benchmark_grid_val/`
 - aggregated summary: `reports/benchmark_grid_val/summary.json`
+
+## Comparable Benchmark Protocol (Open Retrieval)
+
+For leaderboard-comparable runs, keep retrieval fully open and do not enable source-group restriction.
+`evaluate_rag.py` now blocks `--restrict-source-group` by default; it can be used only in diagnostics with `--allow-diagnostic-group-restriction`.
+
+Build doc+chunk dual indexes:
+
+```bash
+python src/index_corpus.py \
+  --corpus benchmarks/val_docvqa/corpus.jsonl \
+  --doc-output indexes/bench_docvqa_doc.json \
+  --chunk-output indexes/bench_docvqa_chunk_40_10_v2.json \
+  --chunk-size-words 40 \
+  --chunk-overlap-words 10 \
+  --embedding-backend auto
+```
+
+Run open-retrieval smoke grid (k x alpha x template x rerank):
+
+```bash
+python src/run_benchmark_grid.py \
+  --eval-set benchmarks/val_docvqa/eval_set.jsonl \
+  --index indexes/bench_docvqa_doc.json \
+  --output-dir reports/benchmark_grid_docvqa_open_smoke \
+  --retrieval-k 1,3 \
+  --hybrid-alpha 0.3,0.7 \
+  --smoke-max-samples 20
+```
+
+Grid outputs:
+
+- `summary.json` (aggregate)
+- `rows.csv` (flat comparison table)
+- `failure_cases.json` (retrieval miss / generation regression examples)
+

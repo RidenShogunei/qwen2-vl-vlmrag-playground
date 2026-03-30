@@ -3,7 +3,7 @@ import json
 import math
 import re
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
@@ -308,7 +308,70 @@ def load_index(index_path: str) -> Dict:
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
-def retrieve_topk(query: str, index_payload: Dict, topk: int) -> List[Dict]:
+def _minmax_normalize(values: np.ndarray) -> np.ndarray:
+    if values.size == 0:
+        return values
+    min_v = float(values.min())
+    max_v = float(values.max())
+    if max_v - min_v < 1e-8:
+        return np.zeros_like(values, dtype=np.float32)
+    return (values - min_v) / (max_v - min_v)
+
+
+def _bm25_scores(query_tokens: List[str], entries: Sequence[Dict]) -> np.ndarray:
+    n_docs = len(entries)
+    if n_docs == 0:
+        return np.zeros((0,), dtype=np.float32)
+    tokenized_docs = [tokenize_text(item.get("text", "")) for item in entries]
+    doc_lens = np.array([max(1, len(toks)) for toks in tokenized_docs], dtype=np.float32)
+    avgdl = float(doc_lens.mean()) if n_docs else 1.0
+
+    tf_per_doc = [Counter(toks) for toks in tokenized_docs]
+    df = defaultdict(int)
+    for toks in tokenized_docs:
+        for tok in set(toks):
+            df[tok] += 1
+
+    k1 = 1.2
+    b = 0.75
+    scores = np.zeros((n_docs,), dtype=np.float32)
+    for q in query_tokens:
+        doc_freq = df.get(q, 0)
+        if doc_freq == 0:
+            continue
+        idf = math.log(1.0 + (n_docs - doc_freq + 0.5) / (doc_freq + 0.5))
+        for i, tf in enumerate(tf_per_doc):
+            f = tf.get(q, 0)
+            if f == 0:
+                continue
+            denom = f + k1 * (1.0 - b + b * (doc_lens[i] / avgdl))
+            scores[i] += float(idf * ((f * (k1 + 1.0)) / denom))
+    return scores
+
+
+def derive_source_group(source_id: str, mode: str = "auto") -> str:
+    if mode not in {"auto", "exact", "prefix_before_img"}:
+        raise ValueError(f"Unsupported source group mode: {mode}")
+    if mode == "exact":
+        return source_id
+    if mode == "prefix_before_img":
+        return re.sub(r"::img\d+$", "", source_id)
+    if "::img" in source_id:
+        return re.sub(r"::img\d+$", "", source_id)
+    return source_id
+
+
+def retrieve_topk(
+    query: str,
+    index_payload: Dict,
+    topk: int,
+    source_group_key: str = "",
+    source_group_mode: str = "auto",
+    retrieval_mode: str = "dense",
+    hybrid_alpha: float = 0.7,
+) -> List[Dict]:
+    if retrieval_mode not in {"dense", "hybrid"}:
+        raise ValueError(f"Unsupported retrieval_mode: {retrieval_mode}")
     entries = index_payload["entries"]
     backend = index_payload["embedding"]["backend"]
     model_name = index_payload["embedding"]["embedding_model"]
@@ -319,11 +382,29 @@ def retrieve_topk(query: str, index_payload: Dict, topk: int) -> List[Dict]:
     )
     query_vec = query_vecs[0]
     vectors = np.array(index_payload["vectors"], dtype=np.float32)
-    scores = vectors @ query_vec
+    dense_scores = vectors @ query_vec
+    scores = dense_scores.copy()
+    if retrieval_mode == "hybrid":
+        query_tokens = tokenize_text(query)
+        bm25_scores = _bm25_scores(query_tokens, entries)
+        dense_norm = _minmax_normalize(dense_scores)
+        bm25_norm = _minmax_normalize(bm25_scores)
+        alpha = max(0.0, min(1.0, float(hybrid_alpha)))
+        scores = alpha * dense_norm + (1.0 - alpha) * bm25_norm
+
+    if source_group_key:
+        for idx, entry in enumerate(entries):
+            entry_source_id = entry.get("source_id", "")
+            if derive_source_group(entry_source_id, mode=source_group_mode) != source_group_key:
+                scores[idx] = -1e9
+
     ranked = np.argsort(-scores)[:topk]
     results = []
     for idx in ranked:
+        if float(scores[idx]) <= -1e8:
+            continue
         item = dict(entries[idx])
+        item["dense_score"] = round(float(dense_scores[idx]), 4)
         item["score"] = round(float(scores[idx]), 4)
         results.append(item)
     return results

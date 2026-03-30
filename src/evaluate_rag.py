@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
 from vlmrag_utils import (
+    derive_source_group,
     PROMPT_TEMPLATES,
     format_rag_context,
     generate_multimodal_answer,
@@ -29,6 +30,11 @@ def parse_args():
     parser.add_argument("--retrieval-k", type=int, default=3)
     parser.add_argument("--prompt-template", default="direct", choices=sorted(PROMPT_TEMPLATES.keys()))
     parser.add_argument("--rerank", action="store_true")
+    parser.add_argument("--rerank-pool-size", type=int, default=None, help="Retrieve this many candidates before rerank; defaults to retrieval-k.")
+    parser.add_argument("--restrict-source-group", action="store_true", help="Restrict retrieval candidates to the same source group as each sample.")
+    parser.add_argument("--source-group-mode", default="auto", choices=["auto", "exact", "prefix_before_img"], help="How source_id is mapped to source group.")
+    parser.add_argument("--retrieval-mode", default="dense", choices=["dense", "hybrid"], help="Retrieval scoring mode.")
+    parser.add_argument("--hybrid-alpha", type=float, default=0.7, help="Dense score weight in hybrid mode (0~1).")
     parser.add_argument("--run-generation", action="store_true")
     parser.add_argument("--model", default="Qwen/Qwen2-VL-2B-Instruct")
     parser.add_argument("--max-new-tokens", type=int, default=80)
@@ -39,6 +45,12 @@ def parse_args():
     parser.add_argument("--failure-json", default=None, help="Optional path for failure cases JSON")
     parser.add_argument("--data-version", default="unknown")
     parser.add_argument("--config-name", default="default")
+    parser.add_argument("--max-samples", type=int, default=None, help="Optional cap for quick smoke evaluation.")
+    parser.add_argument(
+        "--allow-diagnostic-group-restriction",
+        action="store_true",
+        help="Allow --restrict-source-group for diagnostic runs. Main benchmark runs should keep this off.",
+    )
     return parser.parse_args()
 
 
@@ -139,8 +151,15 @@ def get_field_groups(row: Dict) -> List[str]:
 
 def main():
     args = parse_args()
+    if args.restrict_source_group and not args.allow_diagnostic_group_restriction:
+        raise ValueError(
+            "restrict_source_group is disabled for comparable benchmark runs. "
+            "Use --allow-diagnostic-group-restriction only for diagnostic analysis."
+        )
     index_payload = load_index(args.index)
     eval_rows = load_eval_set(args.eval_set)
+    if args.max_samples is not None:
+        eval_rows = eval_rows[: max(0, args.max_samples)]
 
     result_rows = []
     retrieval_hits = 0
@@ -155,9 +174,22 @@ def main():
     for row in eval_rows:
         query = row["query"]
         expected_ids = row.get("expected_retrieval_ids", [row["source_id"]])
-        retrieved = retrieve_topk(query=query, index_payload=index_payload, topk=args.retrieval_k)
+        retrieval_pool = args.retrieval_k if args.rerank_pool_size is None else max(args.retrieval_k, args.rerank_pool_size)
+        source_group_key = ""
+        if args.restrict_source_group:
+            source_group_key = derive_source_group(row["source_id"], mode=args.source_group_mode)
+        retrieved = retrieve_topk(
+            query=query,
+            index_payload=index_payload,
+            topk=retrieval_pool,
+            source_group_key=source_group_key,
+            source_group_mode=args.source_group_mode,
+            retrieval_mode=args.retrieval_mode,
+            hybrid_alpha=args.hybrid_alpha,
+        )
         if args.rerank:
             retrieved = rerank_results_by_overlap(query, retrieved)
+        retrieved = retrieved[: args.retrieval_k]
 
         retrieved_ids = [x["source_id"] if x.get("source_id") else x["id"] for x in retrieved]
         hit = any(item_id in set(expected_ids) for item_id in retrieved_ids)
@@ -285,11 +317,18 @@ def main():
             "retrieval_k": args.retrieval_k,
             "prompt_template": args.prompt_template,
             "rerank": args.rerank,
+            "rerank_pool_size": args.rerank_pool_size,
+            "restrict_source_group": args.restrict_source_group,
+            "source_group_mode": args.source_group_mode,
+            "retrieval_mode": args.retrieval_mode,
+            "hybrid_alpha": args.hybrid_alpha,
             "run_generation": args.run_generation,
             "model": args.model,
             "max_new_tokens": args.max_new_tokens,
             "resize_max_edge": args.resize_max_edge,
             "cpu": args.cpu,
+            "max_samples": args.max_samples,
+            "allow_diagnostic_group_restriction": args.allow_diagnostic_group_restriction,
         },
         "metrics": metrics,
         "group_metrics": groups,
@@ -353,3 +392,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
