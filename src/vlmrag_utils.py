@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import json
 import math
 import re
@@ -370,7 +370,7 @@ def retrieve_topk(
     retrieval_mode: str = "dense",
     hybrid_alpha: float = 0.7,
 ) -> List[Dict]:
-    if retrieval_mode not in {"dense", "hybrid"}:
+    if retrieval_mode not in {"text", "dense", "hybrid"}:
         raise ValueError(f"Unsupported retrieval_mode: {retrieval_mode}")
     entries = index_payload["entries"]
     backend = index_payload["embedding"]["backend"]
@@ -440,3 +440,4 @@ def render_rag_prompt(template_name: str, question: str, context: str) -> str:
         allowed = ", ".join(sorted(PROMPT_TEMPLATES.keys()))
         raise ValueError(f"Unsupported prompt template '{template_name}'. Allowed: {allowed}")
     return PROMPT_TEMPLATES[template_name].format(question=question, context=context)
+

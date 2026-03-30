@@ -1,70 +1,113 @@
-﻿# VLM-RAG 代码阅读与实验指南（中文）
+﻿# 多模态 Benchmark 代码阅读与实验指南（中文）
 
-这份文档用于快速带你看懂当前仓库里与 benchmark 提分最相关的代码，并能复现我们现在的开放检索实验流程。
+这份文档专门对应当前仓库的“多模态 RAG baseline”实现，目标是让你快速看懂：
 
-## 1. 先看什么（阅读顺序）
+1. 为什么文本 RAG 在图文 benchmark 上会失效
+2. 双塔多模态检索在代码里怎么落地
+3. 怎么复现 DocVQA / InfographicVQA 的可比实验
 
-1. `src/vlmrag_utils.py`
-2. `src/evaluate_rag.py`
-3. `src/index_corpus.py`
+---
+
+## 1. 先读什么（建议顺序）
+
+1. `src/mm_retrieval_utils.py`
+2. `src/index_corpus.py`
+3. `src/evaluate_rag.py`
 4. `src/run_benchmark_grid.py`
 5. `BENCHMARK_IMPROVEMENT_CN.md`
 
-建议顺序原因：
+阅读重点：
 
-- `vlmrag_utils.py` 是能力底座（embedding、检索、hybrid、rerank、prompt 拼接）。
-- `evaluate_rag.py` 是主评测入口（指标、报告结构、可比性约束）。
-- `index_corpus.py` 负责生成 doc/chunk 两类索引。
-- `run_benchmark_grid.py` 把网格实验自动化并产出汇总。
-- `BENCHMARK_IMPROVEMENT_CN.md` 记录阶段结论与取舍。
+- `mm_retrieval_utils.py`：多模态检索核心（图像 embedding + 文本 embedding + late fusion）
+- `index_corpus.py`：如何把 corpus 变成“文本向量 + 图像向量”的联合索引
+- `evaluate_rag.py`：text/hybrid/multimodal 三种模式如何统一评测
+- `run_benchmark_grid.py`：如何批量跑 `k × alpha × template × rerank`
 
-## 2. 关键函数怎么读
+---
 
-### 2.1 `src/vlmrag_utils.py`
+## 2. 关键代码入口
 
-- `build_text_embeddings(...)`
-  - 负责文本向量化，支持 `sentence-transformers` 与 fallback。
-- `_bm25_scores(...)`
-  - 词法 BM25 打分，用于 hybrid。
-- `retrieve_topk(...)`
-  - 当前检索主逻辑：
-  - dense 打分；
-  - 可选 hybrid 融合（`hybrid_alpha`）；
-  - 可选 source-group 过滤（仅诊断用，不用于主榜）。
-- `rerank_results_by_overlap(...)`
-  - 轻量重排（基于 query 与证据词重叠）。
-- `format_rag_context(...)` / `render_rag_prompt(...)`
-  - 证据注入与模板渲染（`direct/cited/strict`）。
+## 2.1 `src/mm_retrieval_utils.py`
 
-### 2.2 `src/evaluate_rag.py`
+- `compute_image_embeddings(...)`
+  - 用双塔模型（默认 SigLIP）把图像转成向量。
+- `retrieve_topk_multimodal(...)`
+  - 计算三组分数：
+  - 文本相似度（query text vs text vectors）
+  - 图像相似度（query image vs image vectors）
+  - 线性融合分数（`text_alpha * text_norm + image_alpha * image_norm`）
 
-- `parse_args()`
-  - 重点参数：`--retrieval-mode --hybrid-alpha --rerank --rerank-pool-size --prompt-template --retrieval-k`。
-  - `--max-samples` 用于 smoke。
-  - `--restrict-source-group` 默认被禁止（除非加 `--allow-diagnostic-group-restriction`）。
-- `main()`
-  - 流程：加载 eval -> 检索/重排 -> 可选生成 -> 统计指标 -> 导出 JSON/CSV/failure。
-- 报告字段
-  - 聚合：`hit_rate_at_k`, `retrieval_mrr`, `EM`, `Token F1`
-  - 行级：`retrieved_ids`, `retrieval_hit`, `retrieval_mrr`
-  - 元信息：时间戳、git sha、配置签名
+这里是第一版 baseline 的核心假设：
 
-### 2.3 `src/index_corpus.py`
+- 不做重型 cross-attention reranker；
+- 先用轻量 late fusion 验证“视觉信号是否真的能提升召回”。
 
-- 支持三种输出模式：
-  - 兼容旧版：`--output`
-  - 新版双索引：`--doc-output + --chunk-output`
-- `index_config.level` 会标记 `doc/chunk/single`，便于后续审计。
+## 2.2 `src/index_corpus.py`
 
-### 2.4 `src/run_benchmark_grid.py`
+新增多模态相关参数：
 
-- 网格维度：`k × alpha × template × rerank`
-- 输出固定三件：
-  - `summary.json`（聚合）
-  - `rows.csv`（平铺对比表）
-  - `failure_cases.json`（失败样例集合）
+- `--with-image-embeddings`
+- `--multimodal-model`
+- `--eval-set-for-images`
+- `--mm-cpu`
 
-## 3. 复现实验（开放检索）
+多模态索引要点：
+
+- 索引仍保留文本向量（兼容 text/hybrid）。
+- 当 `--with-image-embeddings` 打开时，额外写入 `image_vectors`。
+- 如果某条语料没有可解析图像路径，会直接报错，避免“假多模态索引”。
+
+## 2.3 `src/evaluate_rag.py`
+
+新增参数：
+
+- `--retrieval-mode text|dense|hybrid|multimodal`
+- `--multimodal-model`
+- `--image-alpha`
+- `--text-alpha`
+- `--mm-cpu`
+
+逻辑：
+
+- `text/dense/hybrid` 走原有 `retrieve_topk(...)`
+- `multimodal` 走 `retrieve_topk_multimodal(...)`
+
+主结果约束：
+
+- 默认禁用 `--restrict-source-group`，保证 benchmark 可比（open retrieval）。
+
+## 2.4 `src/run_benchmark_grid.py`
+
+新增多模态网格：
+
+- `--multimodal`
+- `--multimodal-model`
+- `--image-alpha-grid`
+- `--text-alpha`
+
+产物固定：
+
+- `summary.json`
+- `rows.csv`
+- `failure_cases.json`
+
+---
+
+## 3. 为什么文本 RAG 在 InfographicVQA 上容易低分
+
+一句话：问题依赖版面视觉证据，而我们此前只检索文本。
+
+常见失败模式：
+
+- 相似文本在不同图中高度重复，文本向量难区分正确样本。
+- query 实际问的是“图里哪个区域/图例/布局关系”，文本无法完整表达。
+- top-k evidence 看起来“语义相关”，但不是当前图片对应证据。
+
+所以这轮改造的意义，不是“调一个更好的 alpha”，而是把视觉证据纳入检索本身。
+
+---
+
+## 4. 复现实验（推荐命令）
 
 先激活环境：
 
@@ -73,54 +116,71 @@ cd /home/chenj/.openclaw/workspace/qwen2-vl-vlmrag-playground
 source .venv/bin/activate
 ```
 
-### 3.1 建索引（doc + chunk）
+### 4.1 构建多模态 doc-level 索引
 
 ```bash
 python src/index_corpus.py \
   --corpus benchmarks/val_docvqa/corpus.jsonl \
-  --doc-output indexes/bench_docvqa_doc.json \
-  --chunk-output indexes/bench_docvqa_chunk_40_10_v2.json \
-  --chunk-size-words 40 \
-  --chunk-overlap-words 10 \
-  --embedding-backend auto
+  --doc-output indexes/bench_docvqa_doc_mm_siglip.json \
+  --with-image-embeddings \
+  --multimodal-model google/siglip-base-patch16-224 \
+  --eval-set-for-images benchmarks/val_docvqa/eval_set.jsonl
 ```
 
-### 3.2 跑 smoke 网格（先选默认配置）
+### 4.2 单次多模态评测
+
+```bash
+python src/evaluate_rag.py \
+  --eval-set benchmarks/val_docvqa/eval_set.jsonl \
+  --index indexes/bench_docvqa_doc_mm_siglip.json \
+  --retrieval-mode multimodal \
+  --retrieval-k 3 \
+  --image-alpha 0.7 \
+  --text-alpha 0.5 \
+  --prompt-template strict \
+  --run-generation \
+  --output-json reports/docvqa_mm_k3.json \
+  --output-csv reports/docvqa_mm_k3.csv \
+  --failure-json reports/docvqa_mm_k3_failures.json
+```
+
+### 4.3 多模态 smoke 网格
 
 ```bash
 python src/run_benchmark_grid.py \
-  --eval-set benchmarks/val_docvqa/eval_set.jsonl \
-  --index indexes/bench_docvqa_doc.json \
-  --output-dir reports/benchmark_grid_docvqa_open_smoke \
-  --retrieval-k 1,3 \
-  --hybrid-alpha 0.3,0.7 \
-  --smoke-max-samples 20
-```
-
-### 3.3 跑 val 全量网格
-
-```bash
-python src/run_benchmark_grid.py \
-  --eval-set benchmarks/val_docvqa/eval_set.jsonl \
-  --index indexes/bench_docvqa_doc.json \
-  --output-dir reports/benchmark_grid_docvqa_open_full \
+  --eval-set benchmarks/val_infographic_vqa/eval_set.jsonl \
+  --index indexes/bench_infographic_doc_mm_siglip.json \
+  --output-dir reports/benchmark_grid_infographic_mm_smoke \
+  --multimodal \
   --retrieval-k 1,3,5 \
-  --hybrid-alpha 0.3,0.5,0.7
+  --image-alpha-grid 0.3,0.5,0.7 \
+  --text-alpha 0.5 \
+  --smoke-max-samples 30
 ```
 
-InfographicVQA 同理，把 `--eval-set` 和 `--output-dir` 换成对应路径。
+---
 
-## 4. 怎么读结果（最实用）
+## 5. 如何解读结果（最实用）
 
-1. 先看 `summary.json`
-  - 找 `retrieval_mrr` 与 `hit_rate_at_k` 最优配置。
-2. 再看 `rows.csv`
-  - 横向比较 `k/alpha/template/rerank` 的变化趋势。
-3. 最后看 `failure_cases.json`
-  - 提取 3 条提升样例和 3 条失败样例，写出“为什么”。
+先看 `summary.json`：
 
-## 5. 结果解释边界（非常重要）
+- 关注 `hit_rate_at_k` 和 `retrieval_mrr` 的变化。
+- 对比同 `k` 下不同 `image_alpha`，判断视觉分数贡献是否稳定。
 
-- 主结论只认开放检索（无 group 限制）。
-- `--restrict-source-group` 仅用于诊断上限，不用于可比跑分。
-- 如果某配置在 DocVQA 提升、但 Infographic 仍低，优先怀疑语料可区分信号不足，而不是先盲调 alpha。
+再看 `failure_cases.json`：
+
+- `generation_improvement`：找“图像信号明显帮助召回”的样本。
+- `retrieval_miss`：找“即使有图像 embedding 也失败”的样本。
+
+最后看 `rows.csv`：
+
+- 筛 3 条提升样例 + 3 条失败样例，写出可解释原因。
+
+---
+
+## 6. 下一步学习路线（基于当前实现）
+
+1. 先固定一组 DocVQA/Infographic 都不过度退化的默认配置。
+2. 在 doc-level 稳定后，再做 chunk-level 多模态扩展。
+3. 引入更强的第二阶段 rerank（仍不改主 VLM）。
+4. 每轮只改一个变量，并保留 `summary + rows + failure` 三件套报告。

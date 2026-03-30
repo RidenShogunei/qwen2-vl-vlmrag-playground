@@ -253,3 +253,43 @@ python src/evaluate_rag.py \
 - 在 smoke 子集上，`k=3` 明显优于 `k=1`，满足 `hit_rate@k` 的单调性预期。
 - `alpha=0.3` 在该子集上优于 `alpha=0.7`（说明 BM25 成分对当前文本组织更有帮助）。
 - 后续应基于这套流程跑 val 全量，输出正式对比结论。
+
+## 10. 本轮升级：多模态双塔检索（SigLIP）
+
+本轮按“仅改 RAG 侧”的原则，把检索升级为多模态 late fusion：
+
+- 文本分数：query text vs corpus text vectors
+- 图像分数：query image vs corpus image vectors
+- 融合分数：`text_alpha * text_norm + image_alpha * image_norm`
+
+### 10.1 新增能力
+
+- 新文件：`src/mm_retrieval_utils.py`
+- `src/index_corpus.py` 支持：
+  - `--with-image-embeddings`
+  - `--multimodal-model`
+  - `--eval-set-for-images`
+- `src/evaluate_rag.py` 支持：
+  - `--retrieval-mode multimodal`
+  - `--image-alpha --text-alpha`
+- `src/run_benchmark_grid.py` 支持多模态网格：
+  - `--multimodal --image-alpha-grid --multimodal-model`
+
+### 10.2 smoke 结果（当前环境）
+
+- DocVQA smoke（30样本级别）：最佳配置约 `hit_rate@3≈0.8333`, `MRR≈0.5889`
+- InfographicVQA smoke（30样本级别）：出现高分配置（如 `hit_rate@1≈0.9667`, `MRR≈0.9667`）
+
+### 10.3 结果解读边界
+
+这个结果说明“视觉信号可以显著改善召回”，但暂时只能当作 smoke 观察，不直接当作主结论：
+
+1. 当前是 smoke 子集，不是 val 全量主报告。
+2. 需要继续核对语料映射与 evidence 可追溯性，避免出现路径或标注泄漏。
+3. 主结论仍需以 open retrieval + val 全量报告为准。
+
+### 10.4 下一步
+
+1. 先固定一组 smoke 稳定配置（Doc/Info 都不退化）。
+2. 跑 val 全量并产出统一 `summary/rows/failure`。
+3. 给出 3 条提升样例与 3 条失败样例的可解释分析。

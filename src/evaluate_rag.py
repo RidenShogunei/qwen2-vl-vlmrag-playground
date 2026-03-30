@@ -8,9 +8,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
+from mm_retrieval_utils import DEFAULT_MM_MODEL, retrieve_topk_multimodal
 from vlmrag_utils import (
-    derive_source_group,
     PROMPT_TEMPLATES,
+    derive_source_group,
     format_rag_context,
     generate_multimodal_answer,
     load_index,
@@ -33,8 +34,12 @@ def parse_args():
     parser.add_argument("--rerank-pool-size", type=int, default=None, help="Retrieve this many candidates before rerank; defaults to retrieval-k.")
     parser.add_argument("--restrict-source-group", action="store_true", help="Restrict retrieval candidates to the same source group as each sample.")
     parser.add_argument("--source-group-mode", default="auto", choices=["auto", "exact", "prefix_before_img"], help="How source_id is mapped to source group.")
-    parser.add_argument("--retrieval-mode", default="dense", choices=["dense", "hybrid"], help="Retrieval scoring mode.")
+    parser.add_argument("--retrieval-mode", default="hybrid", choices=["text", "dense", "hybrid", "multimodal"], help="Retrieval scoring mode.")
     parser.add_argument("--hybrid-alpha", type=float, default=0.7, help="Dense score weight in hybrid mode (0~1).")
+    parser.add_argument("--multimodal-model", default=DEFAULT_MM_MODEL, help="Dual-tower multimodal retrieval model.")
+    parser.add_argument("--image-alpha", type=float, default=0.5, help="Image score weight in multimodal fusion.")
+    parser.add_argument("--text-alpha", type=float, default=0.5, help="Text score weight in multimodal fusion.")
+    parser.add_argument("--mm-cpu", action="store_true", help="Force CPU for multimodal retrieval tower.")
     parser.add_argument("--run-generation", action="store_true")
     parser.add_argument("--model", default="Qwen/Qwen2-VL-2B-Instruct")
     parser.add_argument("--max-new-tokens", type=int, default=80)
@@ -68,7 +73,6 @@ def load_eval_set(path: str):
         if "expected_retrieval_ids" not in row:
             row["expected_retrieval_ids"] = [row["source_id"]]
         if "answers" not in row:
-            # Backward compatibility for old eval set
             kws = row.get("expected_keywords", [])
             row["answers"] = kws if isinstance(kws, list) and kws else [row["query"]]
         rows.append(row)
@@ -149,6 +153,10 @@ def get_field_groups(row: Dict) -> List[str]:
     return groups
 
 
+def _effective_retrieval_mode(mode: str) -> str:
+    return "text" if mode == "dense" else mode
+
+
 def main():
     args = parse_args()
     if args.restrict_source_group and not args.allow_diagnostic_group_restriction:
@@ -156,6 +164,8 @@ def main():
             "restrict_source_group is disabled for comparable benchmark runs. "
             "Use --allow-diagnostic-group-restriction only for diagnostic analysis."
         )
+    mode = _effective_retrieval_mode(args.retrieval_mode)
+
     index_payload = load_index(args.index)
     eval_rows = load_eval_set(args.eval_set)
     if args.max_samples is not None:
@@ -175,18 +185,32 @@ def main():
         query = row["query"]
         expected_ids = row.get("expected_retrieval_ids", [row["source_id"]])
         retrieval_pool = args.retrieval_k if args.rerank_pool_size is None else max(args.retrieval_k, args.rerank_pool_size)
-        source_group_key = ""
-        if args.restrict_source_group:
-            source_group_key = derive_source_group(row["source_id"], mode=args.source_group_mode)
-        retrieved = retrieve_topk(
-            query=query,
-            index_payload=index_payload,
-            topk=retrieval_pool,
-            source_group_key=source_group_key,
-            source_group_mode=args.source_group_mode,
-            retrieval_mode=args.retrieval_mode,
-            hybrid_alpha=args.hybrid_alpha,
-        )
+
+        if mode == "multimodal":
+            retrieved = retrieve_topk_multimodal(
+                query=query,
+                query_image_path=row.get("image", ""),
+                index_payload=index_payload,
+                topk=retrieval_pool,
+                model_name=args.multimodal_model,
+                image_alpha=args.image_alpha,
+                text_alpha=args.text_alpha,
+                force_cpu=args.mm_cpu,
+            )
+        else:
+            source_group_key = ""
+            if args.restrict_source_group:
+                source_group_key = derive_source_group(row["source_id"], mode=args.source_group_mode)
+            retrieved = retrieve_topk(
+                query=query,
+                index_payload=index_payload,
+                topk=retrieval_pool,
+                source_group_key=source_group_key,
+                source_group_mode=args.source_group_mode,
+                retrieval_mode=mode,
+                hybrid_alpha=args.hybrid_alpha,
+            )
+
         if args.rerank:
             retrieved = rerank_results_by_overlap(query, retrieved)
         retrieved = retrieved[: args.retrieval_k]
@@ -320,8 +344,12 @@ def main():
             "rerank_pool_size": args.rerank_pool_size,
             "restrict_source_group": args.restrict_source_group,
             "source_group_mode": args.source_group_mode,
-            "retrieval_mode": args.retrieval_mode,
+            "retrieval_mode": mode,
             "hybrid_alpha": args.hybrid_alpha,
+            "multimodal_model": args.multimodal_model,
+            "image_alpha": args.image_alpha,
+            "text_alpha": args.text_alpha,
+            "mm_cpu": args.mm_cpu,
             "run_generation": args.run_generation,
             "model": args.model,
             "max_new_tokens": args.max_new_tokens,
@@ -392,4 +420,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

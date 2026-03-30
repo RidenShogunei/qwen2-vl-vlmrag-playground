@@ -1,30 +1,27 @@
 ﻿# Qwen2-VL VLM-RAG Playground
 
-A small learning project for running `Qwen/Qwen2-VL-2B-Instruct` in WSL and building a minimal VLM-RAG workflow on top of it.
+一个用于学习 `Qwen/Qwen2-VL-2B-Instruct` 与 VLM-RAG 的可复现实验仓库，当前已支持：
 
-## What this project includes
+- 文本检索基线（dense / hybrid）
+- 多模态检索基线（SigLIP 双塔 + late fusion）
+- DocVQA / InfographicVQA benchmark 评测与网格实验
 
-- GUIDE_CN.md: 中文代码阅读与实验指南
-- `CODE_READING.md`: guided walkthrough for understanding and modifying the code`n- `CODE_READING_CN_BENCHMARK.md`: 中文 benchmark 代码阅读与复现实验指南
-- `src/run_qwen2_vl_chat.py`: single-image chat with Qwen2-VL
-- `src/index_corpus.py`: build a tiny local text retrieval index for RAG
-- `src/query_with_rag.py`: compare plain VLM output vs RAG-augmented output
-- `src/evaluate_rag.py`: evaluate retrieval/generation metrics and export reports
-- `examples/rag_corpus/corpus.jsonl`: starter corpus for retrieval
-- `examples/rag_eval_set.jsonl`: 24-sample evaluation set for baseline tracking
+## 核心脚本
 
-## Environment notes
+- `src/run_qwen2_vl_chat.py`：单图问答最小入口
+- `src/index_corpus.py`：构建 doc/chunk 索引（可选图像向量）
+- `src/query_with_rag.py`：单条 query 的 plain vs rag 对比
+- `src/evaluate_rag.py`：主评测入口（hit_rate/MRR/EM/F1）
+- `src/run_benchmark_grid.py`：批量网格实验
+- `src/mm_retrieval_utils.py`：多模态检索工具（SigLIP 双塔）
 
-This project is designed for the current WSL setup:
+中文导读：
 
-- Python 3.10+
-- GPU preferred, CPU supported for smoke tests
-- First run will download `Qwen/Qwen2-VL-2B-Instruct` because it is not currently cached
-- On this machine, install PyTorch with the CUDA 12.1 wheel. The generic latest wheel may pick CUDA 13 and fail against the current NVIDIA driver
+- `GUIDE_CN.md`
+- `CODE_READING_CN_BENCHMARK.md`
+- `BENCHMARK_IMPROVEMENT_CN.md`
 
-## Quick start
-
-### 1. Create a virtual environment
+## 环境
 
 ```bash
 cd /home/chenj/.openclaw/workspace/qwen2-vl-vlmrag-playground
@@ -35,254 +32,99 @@ python -m pip install -r requirements.txt
 python -m pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.5.1 torchvision==0.20.1
 ```
 
-### 2. Run plain image chat
+## 文本/混合检索基线
 
-```bash
-python src/run_qwen2_vl_chat.py \
-  --image /absolute/path/to/your/image.png \
-  --prompt "Describe the UI and list anything notable."
-```
-
-### 3. Build retrieval index
-
-```bash
-python src/index_corpus.py \
-  --corpus examples/rag_corpus/corpus.jsonl \
-  --output indexes/rag_corpus_index.json \
-  --embedding-backend auto
-```
-
-Optional chunking:
-
-```bash
-python src/index_corpus.py \
-  --corpus examples/rag_corpus/corpus.jsonl \
-  --output indexes/rag_corpus_index_chunked.json \
-  --embedding-backend auto \
-  --chunk-size-words 40 \
-  --chunk-overlap-words 10
-```
-
-### 4. Query with and without RAG
-
-```bash
-python src/query_with_rag.py \
-  --image /absolute/path/to/your/image.png \
-  --prompt "Which product area does this screen belong to?" \
-  --index indexes/rag_corpus_index.json \
-  --retrieval-k 3 \
-  --prompt-template cited \
-  --rerank \
-  --show-evidence
-```
-
-## Prompt templates
-
-`query_with_rag.py` supports three templates:
-
-- `direct`: straightforward context injection
-- `cited`: asks model to cite evidence ids like `[1]`
-- `strict`: restricts claims to evidence and encourages explicit uncertainty
-
-Use `--prompt-template {direct|cited|strict}` for A/B testing.
-
-## Evaluation workflow (single command)
-
-Run baseline retrieval metrics only:
-
-```bash
-python src/evaluate_rag.py \
-  --eval-set examples/rag_eval_set.jsonl \
-  --index indexes/rag_corpus_index.json \
-  --retrieval-k 3 \
-  --prompt-template direct \
-  --output-json reports/baseline_direct.json \
-  --output-csv reports/baseline_direct_rows.csv
-```
-
-Run retrieval + generation keyword checks:
-
-```bash
-python src/evaluate_rag.py \
-  --eval-set examples/rag_eval_set.jsonl \
-  --index indexes/rag_corpus_index.json \
-  --retrieval-k 3 \
-  --prompt-template strict \
-  --rerank \
-  --run-generation \
-  --output-json reports/strict_rerank_with_gen.json \
-  --output-csv reports/strict_rerank_with_gen_rows.csv
-```
-
-The JSON report includes config, metrics, timestamp, optional git sha, row-level outcomes, and failure examples.
-
-## How the minimal VLM-RAG flow works
-
-1. A small corpus of reference descriptions is embedded into vectors.
-2. A user question retrieves top-k reference entries.
-3. Optional lexical rerank adjusts order based on query-term overlap.
-4. Retrieved context is injected by a selected prompt template.
-5. The script compares plain VLM answer vs RAG-enhanced answer.
-
-## Corpus format
-
-`corpus.jsonl` expects one JSON object per line:
-
-```json
-{"id":"entry-1","title":"Analytics Dashboard","image":"examples/screens/dashboard.png","text":"A product analytics dashboard with KPI cards, trend charts, and conversion breakdowns."}
-```
-
-Fields:
-
-- `id`: required unique id
-- `title`: optional short label
-- `image`: optional local image path for reference only
-- `text`: required retrieval text
-
-## Evaluation set format
-
-`rag_eval_set.jsonl` expects one JSON object per line:
-
-```json
-{"id":"q01","query":"Where are KPI cards?","expected_retrieval_ids":["analytics-dashboard"],"expected_keywords":["analytics","dashboard"],"image":"examples/test_ui.png"}
-```
-
-Fields:
-
-- `id`: required query id
-- `query`: required retrieval/generation question
-- `expected_retrieval_ids`: required list for retrieval hit/MRR
-- `expected_keywords`: required list for keyword-hit checks
-- `image`: optional path; required only if `--run-generation`
-
-## Suggested milestone commits
-
-1. Baseline index + baseline evaluation report
-2. Prompt-template A/B report (`direct` vs `cited` vs `strict`)
-3. Rerank comparison report (`--rerank` on/off)
-4. Chunking comparison report (`chunk_size_words`/`chunk_overlap_words` variants)
-
-## Common issues
-
-- Out of memory on 8 GB VRAM:
-  - retry with a smaller image
-  - use `--resize-max-edge 1024` or lower
-  - temporarily run with `--cpu` for a smoke test
-- Slow first run:
-  - model download is expected on first invocation
-- Missing optional embedding deps:
-  - indexing falls back to built-in hashed bag-of-words
-
-
-## Benchmark: DocVQA / InfographicVQA (val)
-
-### 1) Prepare benchmark data
-
-```bash
-python src/prepare_benchmark_data.py \
-  --dataset all \
-  --split validation \
-  --output-dir benchmarks/val \
-  --images-dir benchmarks/images
-```
-
-Prepared files:
-
-- `benchmarks/val/eval_set.jsonl`
-- `benchmarks/val/corpus.jsonl`
-
-### 2) Build retrieval index (official corpus only)
-
-No chunk:
-
-```bash
-python src/index_corpus.py \
-  --corpus benchmarks/val/corpus.jsonl \
-  --output indexes/bench_val_nochunk.json \
-  --embedding-backend auto
-```
-
-Chunked:
-
-```bash
-python src/index_corpus.py \
-  --corpus benchmarks/val/corpus.jsonl \
-  --output indexes/bench_val_chunk_40_10.json \
-  --embedding-backend auto \
-  --chunk-size-words 40 \
-  --chunk-overlap-words 10
-```
-
-### 3) Single benchmark run (plain vs rag)
-
-```bash
-python src/evaluate_rag.py \
-  --eval-set benchmarks/val/eval_set.jsonl \
-  --index indexes/bench_val_nochunk.json \
-  --retrieval-k 3 \
-  --prompt-template direct \
-  --rerank \
-  --run-generation \
-  --output-json reports/bench_k3_direct_rerank.json \
-  --output-csv reports/bench_k3_direct_rerank.csv \
-  --failure-json reports/bench_k3_direct_rerank_failures.json \
-  --data-version docvqa_infographicvqa_val_v1 \
-  --config-name k3_direct_rerank
-```
-
-Metrics include:
-
-- retrieval: `hit_rate_at_k`, `retrieval_mrr`
-- generation: `plain_em`, `plain_f1`, `rag_em`, `rag_f1`
-
-### 4) Run first comparison grid
-
-```bash
-python src/run_benchmark_grid.py \
-  --eval-set benchmarks/val/eval_set.jsonl \
-  --index indexes/bench_val_nochunk.json \
-  --output-dir reports/benchmark_grid_val \
-  --run-generation \
-  --data-version docvqa_infographicvqa_val_v1
-```
-
-Output:
-
-- per-config reports under `reports/benchmark_grid_val/`
-- aggregated summary: `reports/benchmark_grid_val/summary.json`
-
-## Comparable Benchmark Protocol (Open Retrieval)
-
-For leaderboard-comparable runs, keep retrieval fully open and do not enable source-group restriction.
-`evaluate_rag.py` now blocks `--restrict-source-group` by default; it can be used only in diagnostics with `--allow-diagnostic-group-restriction`.
-
-Build doc+chunk dual indexes:
+### 构建索引
 
 ```bash
 python src/index_corpus.py \
   --corpus benchmarks/val_docvqa/corpus.jsonl \
   --doc-output indexes/bench_docvqa_doc.json \
-  --chunk-output indexes/bench_docvqa_chunk_40_10_v2.json \
+  --chunk-output indexes/bench_docvqa_chunk_40_10.json \
   --chunk-size-words 40 \
-  --chunk-overlap-words 10 \
-  --embedding-backend auto
+  --chunk-overlap-words 10
 ```
 
-Run open-retrieval smoke grid (k x alpha x template x rerank):
+### 单次评测（open retrieval）
+
+```bash
+python src/evaluate_rag.py \
+  --eval-set benchmarks/val_docvqa/eval_set.jsonl \
+  --index indexes/bench_docvqa_doc.json \
+  --retrieval-mode hybrid \
+  --hybrid-alpha 0.7 \
+  --retrieval-k 3 \
+  --prompt-template strict \
+  --rerank \
+  --run-generation \
+  --output-json reports/docvqa_hybrid_k3.json \
+  --output-csv reports/docvqa_hybrid_k3.csv \
+  --failure-json reports/docvqa_hybrid_k3_failures.json
+```
+
+## 多模态检索基线（SigLIP 双塔）
+
+### 1) 构建多模态索引
+
+`corpus.jsonl` 保持 `id/text/source_id/meta`，图像路径优先从语料条目 `image` 字段读取；
+如果语料没有 `image`，可用 `--eval-set-for-images` 按 `source_id` 映射。
+
+```bash
+python src/index_corpus.py \
+  --corpus benchmarks/val_infographic_vqa/corpus.jsonl \
+  --doc-output indexes/bench_infographic_doc_mm_siglip.json \
+  --with-image-embeddings \
+  --multimodal-model google/siglip-base-patch16-224 \
+  --eval-set-for-images benchmarks/val_infographic_vqa/eval_set.jsonl
+```
+
+### 2) 单次多模态评测
+
+```bash
+python src/evaluate_rag.py \
+  --eval-set benchmarks/val_infographic_vqa/eval_set.jsonl \
+  --index indexes/bench_infographic_doc_mm_siglip.json \
+  --retrieval-mode multimodal \
+  --multimodal-model google/siglip-base-patch16-224 \
+  --image-alpha 0.7 \
+  --text-alpha 0.5 \
+  --retrieval-k 3 \
+  --prompt-template cited \
+  --run-generation \
+  --output-json reports/infographic_mm_k3.json \
+  --output-csv reports/infographic_mm_k3.csv \
+  --failure-json reports/infographic_mm_k3_failures.json
+```
+
+### 3) 多模态网格实验（smoke）
 
 ```bash
 python src/run_benchmark_grid.py \
-  --eval-set benchmarks/val_docvqa/eval_set.jsonl \
-  --index indexes/bench_docvqa_doc.json \
-  --output-dir reports/benchmark_grid_docvqa_open_smoke \
-  --retrieval-k 1,3 \
-  --hybrid-alpha 0.3,0.7 \
-  --smoke-max-samples 20
+  --eval-set benchmarks/val_infographic_vqa/eval_set.jsonl \
+  --index indexes/bench_infographic_doc_mm_siglip.json \
+  --output-dir reports/benchmark_grid_infographic_mm_smoke \
+  --multimodal \
+  --multimodal-model google/siglip-base-patch16-224 \
+  --retrieval-k 1,3,5 \
+  --image-alpha-grid 0.3,0.5,0.7 \
+  --text-alpha 0.5 \
+  --smoke-max-samples 30
 ```
 
-Grid outputs:
+固定输出：
 
-- `summary.json` (aggregate)
-- `rows.csv` (flat comparison table)
-- `failure_cases.json` (retrieval miss / generation regression examples)
+- `summary.json`
+- `rows.csv`
+- `failure_cases.json`
 
+## 可比性约束（重要）
+
+- 主结果必须是 `open retrieval`。
+- 默认禁止 `--restrict-source-group`（仅诊断时才可加 `--allow-diagnostic-group-restriction`）。
+- 不引入 benchmark 外部语料。
+
+## 常见问题
+
+- 首次模型下载慢：正常。
+- SigLIP 报 tokenizer / protobuf 错误：确认安装 `sentencepiece` 与 `protobuf`。
+- 显存不足：先降 `retrieval_k`、缩小图像，必要时加 `--mm-cpu` / `--cpu` 做 smoke。
